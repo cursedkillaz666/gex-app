@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # --- CONFIG ---
-API_KEY = "gmvrvccr1cM5002CHvRk1GalZ_okbdrI"
+API_KEY = "soJ96PK9RZhOOyzz2impg_YiCJKcjhHZ"
 # Trying the V2 endpoint which is more commonly open for standard keys
 BASE_URL = "https://api.massive.com/v2/market/options/snapshot/"
 
