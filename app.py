@@ -1,68 +1,79 @@
 import streamlit as st
-import requests
 import pandas as pd
+import yfinance as yf
 import plotly.graph_objects as go
-
-# --- CONFIG ---
-API_KEY = "gmvrvccr1cM5002CHvRk1GalZ_okbdrI"
-# Using the Contracts endpoint instead of Snapshots
-BASE_URL = "https://api.massive.com/v3/market/options/contracts"
 
 st.set_page_config(page_title="GEX Advisor Pro", layout="wide")
 
-st.sidebar.header("🎯 GEX SCANNER (Basic)")
+# --- UI STYLING ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    [data-testid="stSidebar"] { background-color: #161b22; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.sidebar.header("🎯 GEX SCANNER")
 watchlist_input = st.sidebar.text_input("Watchlist", value="IWM, SPY, QQQ")
 watchlist = [t.strip().upper() for t in watchlist_input.split(',')]
-ticker = st.sidebar.selectbox("SELECT FOCUS TICKER", watchlist)
+ticker_sym = st.sidebar.selectbox("SELECT FOCUS TICKER", watchlist)
 
-def fetch_basic_data(symbol):
+def get_oi_data(symbol):
     try:
-        # Fetching the list of all active contracts for the ticker
-        url = f"{BASE_URL}?underlying_ticker={symbol}&limit=1000&apiKey={API_KEY}"
-        response = requests.get(url, timeout=10)
+        tk = yf.Ticker(symbol)
+        # Get the nearest expiration date
+        expiries = tk.options
+        if not expiries:
+            return None, None
         
-        if response.status_code != 200:
-            st.sidebar.error(f"Error: {response.status_code}. Basic plan might be limited.")
-            return None
-            
-        data = response.json()
-        return pd.DataFrame(data.get('results', []))
+        # Pull the full chain for the nearest expiry
+        opts = tk.option_chain(expiries[0])
+        calls = opts.calls[['strike', 'openInterest']].copy()
+        puts = opts.puts[['strike', 'openInterest']].copy()
+        
+        calls['net_oi'] = calls['openInterest']
+        puts['net_oi'] = -puts['openInterest']
+        
+        combined = pd.concat([calls, puts])
+        spot = tk.history(period="1d")['Close'].iloc[-1]
+        return combined, spot
     except Exception as e:
-        return None
+        st.error(f"Error fetching data: {e}")
+        return None, None
 
 # --- MAIN UI ---
-st.title(f"📊 {ticker} Open Interest Profile")
-st.caption("Proxy for GEX: Using OI concentrations to find 'Walls' and 'Magnets'")
+st.title(f"📊 {ticker_sym} Exposure Profile")
+st.caption("Visualizing Open Interest 'Magnets' and 'Walls'")
 
-df = fetch_basic_data(ticker)
+df, spot_price = get_oi_data(ticker_sym)
 
-if df is not None and not df.empty:
-    # Filter for the nearest expiration to match the "0DTE/Weekly" feel of the X post
-    df['expiration_date'] = pd.to_datetime(df['expiration_date'])
-    nearest_expiry = df['expiration_date'].min()
-    df = df[df['expiration_date'] == nearest_expiry]
-
-    # Calculate Proxy GEX (Calls +, Puts -)
-    df['net_oi'] = df.apply(lambda x: x['open_interest'] if x['contract_type'] == 'call' else -x['open_interest'], axis=1)
+if df is not None:
+    # Group by strike for the chart
+    chart_df = df.groupby('strike')['net_oi'].sum().reset_index()
     
-    chart_df = df.groupby('strike_price')['net_oi'].sum().reset_index()
+    # Filter strikes to show the 'Active Zone' (±5% from spot)
+    chart_df = chart_df[(chart_df['strike'] > spot_price * 0.95) & (chart_df['strike'] < spot_price * 1.05)]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=chart_df['net_oi'],
-        y=chart_df['strike_price'],
+        y=chart_df['strike'],
         orientation='h',
         marker_color=['#00ff00' if x > 0 else '#ff4b4b' for x in chart_df['net_oi']],
         name="Net Open Interest"
     ))
 
+    # Add Spot Price Line
+    fig.add_hline(y=spot_price, line_dash="dash", line_color="#58a6ff", 
+                 annotation_text=f"SPOT: ${spot_price:.2f}", annotation_position="top right")
+
     fig.update_layout(
         template="plotly_dark",
-        height=700,
-        title=f"OI Magnets for {ticker} (Expiry: {nearest_expiry.date()})",
-        xaxis_title="Net Open Interest (Proxy for Gamma)",
-        yaxis_title="Strike Price"
+        height=750,
+        xaxis_title="Put OI (Red) vs Call OI (Green)",
+        yaxis_title="Strike Price",
+        bargap=0.1
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No data returned. Ensure you are using a major ticker like SPY or IWM.")
+    st.info("Loading market data...")
