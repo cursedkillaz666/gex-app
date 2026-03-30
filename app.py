@@ -4,75 +4,75 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # --- CONFIG ---
-# Direct key for initial setup (Note: In a final version, use st.secrets for security)
 API_KEY = "gmvrvccr1cM5002CHvRk1GalZ_okbdrI"
 BASE_URL = "https://api.massive.com/v3/snapshot/options/"
 
 st.set_page_config(page_title="GEX Advisor Pro", layout="wide")
 
-# Custom CSS for that 'Dark Pro' look
+# --- UI STYLING (FIXED ERROR HERE) ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    .stTextInput > div > div > input { color: #00ff00; }
+    [data-testid="stSidebar"] { background-color: #161b22; }
+    .stMetric { background-color: #1c2128; padding: 10px; border-radius: 5px; }
     </style>
-    """, unsafe_allow_case_with_distinction=True)
+    """, unsafe_allow_html=True)
 
-ticker = st.sidebar.text_input("ENTER TICKER", value="IWM").upper()
+# --- SIDEBAR SCANNER ---
+st.sidebar.header("🎯 GEX SCANNER")
+watchlist_input = st.sidebar.text_input("Watchlist (comma separated)", value="IWM, SPY, QQQ, TSLA")
+watchlist = [t.strip().upper() for t in watchlist_input.split(',')]
+ticker = st.sidebar.selectbox("SELECT FOCUS TICKER", watchlist)
 
-def fetch_gex(symbol):
-    url = f"{BASE_URL}{symbol}?apiKey={API_KEY}"
-    response = requests.get(url)
-    if response.status_code != 200:
+def fetch_gex_data(symbol):
+    try:
+        url = f"{BASE_URL}{symbol}?apiKey={API_KEY}"
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return None, None
+        data = response.json()
+        return pd.DataFrame(data.get('results', [])), data.get('underlying_price', 0)
+    except:
         return None, None
+
+# Run Scanner Logic
+scanner_results = []
+for t in watchlist:
+    raw_df, spot = fetch_gex_data(t)
+    if raw_df is not None and not raw_df.empty:
+        # Calculate Net Gamma
+        raw_df['calc_gex'] = raw_df.apply(lambda x: (x['gamma'] * x['open_interest'] * 100) if x['contract_type'] == 'call' else -(x['gamma'] * x['open_interest'] * 100), axis=1)
+        total_net_gex = raw_df['calc_gex'].sum()
+        regime = "Positive 🟢" if total_net_gex > 0 else "Negative 🔴"
+        scanner_results.append({"Ticker": t, "Net GEX": f"${total_net_gex:,.0f}", "Regime": regime})
+
+if scanner_results:
+    st.sidebar.table(pd.DataFrame(scanner_results))
+
+# --- MAIN CHART LOGIC ---
+st.title(f"📊 {ticker} Exposure Profile")
+
+df, spot_price = fetch_gex_data(ticker)
+
+if df is not None and not df.empty:
+    df['gex_val'] = df.apply(lambda x: (x['gamma'] * x['open_interest'] * 100) if x['contract_type'] == 'call' else -(x['gamma'] * x['open_interest'] * 100), axis=1)
+    chart_df = df.groupby('strike_price')['gex_val'].sum().reset_index()
     
-    data = response.json()
-    results = data.get('results', [])
-    spot = data.get('underlying_price', 0)
-    
-    records = []
-    for opt in results:
-        gamma = opt.get('gamma', 0)
-        oi = opt.get('open_interest', 0)
-        strike = opt.get('strike_price')
-        # Calculate GEX: Gamma * OI * 100 (contract multiplier)
-        val = gamma * oi * 100
-        if opt.get('contract_type') == 'put':
-            val *= -1
-        records.append({'strike': strike, 'gex': val})
-    
-    return pd.DataFrame(records), spot
+    # Filter for strikes near spot
+    chart_df = chart_df[(chart_df['strike_price'] > spot_price * 0.95) & (chart_df['strike_price'] < spot_price * 1.05)]
 
-try:
-    df, spot_price = fetch_gex(ticker)
-    if df is not None:
-        # Group by strike to get Net GEX
-        final_df = df.groupby('strike')['gex'].sum().reset_index()
-        
-        # Filter for strikes near the money for a cleaner chart
-        final_df = final_df[(final_df['strike'] > spot_price * 0.9) & (final_df['strike'] < spot_price * 1.1)]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=chart_df['gex_val'],
+        y=chart_df['strike_price'],
+        orientation='h',
+        marker_color=['#00ff00' if x > 0 else '#ff4b4b' for x in chart_df['gex_val']],
+    ))
 
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=final_df['gex'],
-            y=final_df['strike'],
-            orientation='h',
-            marker_color=['#00ff00' if x > 0 else '#ff0000' for x in final_df['gex']],
-            name="Net Gamma"
-        ))
+    fig.add_hline(y=spot_price, line_dash="dash", line_color="#58a6ff", 
+                 annotation_text=f"SPOT: {spot_price}", annotation_position="top right")
 
-        # Spot Price Line
-        fig.add_hline(y=spot_price, line_dash="dash", line_color="cyan", 
-                     annotation_text=f"SPOT: {spot_price}", annotation_position="top right")
-
-        fig.update_layout(
-            title=f"<b>{ticker} TOTAL GAMMA EXPOSURE</b>",
-            template="plotly_dark",
-            height=800,
-            xaxis_title="Gamma Exposure ($)",
-            yaxis_title="Strike Price",
-            bargap=0.1
-        )
-        st.plotly_chart(fig, use_container_width=True)
-except Exception as e:
-    st.error("Connecting to Massive.com... Ensure ticker is valid.")
+    fig.update_layout(template="plotly_dark", height=700)
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("Data load failed. Please check your API key or Ticker.")
