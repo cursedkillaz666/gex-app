@@ -17,18 +17,24 @@ ticker = st.sidebar.selectbox("SELECT FOCUS TICKER", watchlist)
 
 def fetch_gex_data(symbol):
     try:
-        # Note: V2 might require the symbol as a query param ?symbol=IWM
-        url = f"{BASE_URL}?symbol={symbol}&apiKey={API_KEY}"
-        response = requests.get(url, timeout=10)
+        url = f"https://api.massive.com/v3/snapshot/options/{symbol}?apiKey={API_KEY}"
+        
+        # Adding headers to mimic a real browser request
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 403:
-            st.sidebar.error("🔑 API Key 403: Access Denied. Check your Massive.com plan.")
+            st.sidebar.error(f"403 Forbidden: Massive is blocking the connection. Check IP Whitelist settings in your Massive dashboard.")
             return None, None
-        
+            
         data = response.json()
-        results = data.get('data', []) # V2 often uses 'data' instead of 'results'
-        return pd.DataFrame(results), data.get('underlying_price', 0)
+        return pd.DataFrame(data.get('results', [])), data.get('underlying_price', 0)
     except Exception as e:
+        st.sidebar.error(f"Error: {e}")
         return None, None
 
 # --- MAIN UI ---
