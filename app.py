@@ -118,7 +118,17 @@ if df is not None:
         return None
 
 # --- Inside your Main UI ---
-spot_price = get_live_spot(ticker_sym)
+spot_price = def get_live_spot(symbol):
+    try:
+        # This part MUST be indented 4 spaces
+        tk = yf.Ticker(symbol)
+        data = tk.history(period='1d', interval='1m')
+        if not data.empty:
+            return data['Close'].iloc[-1]
+        return None
+    except Exception as e:
+        # This part MUST also be indented
+        return None(ticker_sym)
 df, _ = get_gex_data(ticker_sym) # Use the cached options data
 
 if spot_price and df is not None:
