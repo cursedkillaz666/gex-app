@@ -108,3 +108,21 @@ if df is not None:
         font=dict(family="Courier New, monospace", size=12, color="white")
     )
     st.plotly_chart(fig, use_container_width=True)
+    def get_live_spot(symbol):
+    try:
+        # Fetching '1m' interval to get the most recent price action
+        tk = yf.Ticker(symbol)
+        data = tk.history(period='1d', interval='1m')
+        return data['Close'].iloc[-1]
+    except:
+        return None
+
+# --- Inside your Main UI ---
+spot_price = get_live_spot(ticker_sym)
+df, _ = get_gex_data(ticker_sym) # Use the cached options data
+
+if spot_price and df is not None:
+    # This ensures the blue 'PRICE' line moves even if the bars are cached
+    fig.add_hline(y=spot_price, line_dash="dash", line_color="#00D4FF", 
+                 annotation_text=f"LIVE PRICE: ${spot_price:.2f}", 
+                 annotation_position="top right")
