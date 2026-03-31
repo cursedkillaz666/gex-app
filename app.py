@@ -38,7 +38,7 @@ def get_market_data(symbol):
         calls = opts.calls[['strike', 'openInterest']].copy()
         puts = opts.puts[['strike', 'openInterest']].copy()
         
-        # We use raw Open Interest for "Accuracy" so the bars stay thick
+        # Net Open Interest (The 'Weight')
         calls['val'] = calls['openInterest']
         puts['val'] = -puts['openInterest']
         
@@ -67,9 +67,9 @@ if df is not None and live_price:
     # Aggregate data by strike
     chart_df = df.groupby('strike')['val'].sum().reset_index()
     
-    # ZOOM: 2.5% range to ensure we see the "Magnets"
-    chart_df = chart_df[(chart_df['strike'] > live_price * 0.975) & 
-                        (chart_df['strike'] < live_price * 1.025)]
+    # ZOOM: 2.0% range for high detail
+    chart_df = chart_df[(chart_df['strike'] > live_price * 0.98) & 
+                        (chart_df['strike'] < live_price * 1.02)]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -80,10 +80,18 @@ if df is not None and live_price:
         name="Net Exposure"
     ))
 
-    # FIXING THE Y-AXIS (Showing every 0.5 for IWM)
+    # Y-AXIS PRECISION
+    # dtick=0.5 ensures every half-point is labeled for IWM
     tick_spacing = 0.5 if ticker_sym == "IWM" else 1.0
 
+    # THE FIX: Increased height and bargap to prevent overlapping
     fig.update_layout(
+        template="plotly_dark", 
+        height=1200,   # Taller chart stretches the Y-axis
+        bargap=0.4,    # More space between bars so they don't cover multiple lines
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis_title="PUTS (RED) <---> CALLS (GREEN)",
+        yaxis_title="STRIKE PRICE",
         yaxis = dict(
             tickmode = 'linear',
             tick0 = round(live_price * 2) / 2,
@@ -98,15 +106,6 @@ if df is not None and live_price:
                  annotation_text=f"LIVE: ${live_price:.2f}", 
                  annotation_position="top right",
                  annotation_font=dict(color="#00D4FF", size=14))
-
-    fig.update_layout(
-        template="plotly_dark", 
-        height=900, 
-        bargap=0.05, # This makes the bars thick and solid
-        margin=dict(l=20, r=20, t=40, b=20),
-        xaxis_title="PUTS (RED) <---> CALLS (GREEN)",
-        yaxis_title="STRIKE PRICE"
-    )
     
     st.plotly_chart(fig, use_container_width=True)
 else:
