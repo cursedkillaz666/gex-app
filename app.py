@@ -108,31 +108,50 @@ if df is not None:
         font=dict(family="Courier New, monospace", size=12, color="white")
     )
     st.plotly_chart(fig, use_container_width=True)
-    def get_live_spot(symbol):
+   def get_live_spot(symbol):
     try:
-        # Fetching '1m' interval to get the most recent price action
-        tk = yf.Ticker(symbol)
-        data = tk.history(period='1d', interval='1m')
-        return data['Close'].iloc[-1]
-    except:
-        return None
-
-# --- Inside your Main UI ---
-spot_price = def get_live_spot(symbol):
-    try:
-        # This part MUST be indented 4 spaces
+        # These lines MUST be indented 4 spaces
         tk = yf.Ticker(symbol)
         data = tk.history(period='1d', interval='1m')
         if not data.empty:
             return data['Close'].iloc[-1]
         return None
     except Exception as e:
-        # This part MUST also be indented
-        return None(ticker_sym)
-df, _ = get_gex_data(ticker_sym) # Use the cached options data
+        return None
 
-if spot_price and df is not None:
-    # This ensures the blue 'PRICE' line moves even if the bars are cached
-    fig.add_hline(y=spot_price, line_dash="dash", line_color="#00D4FF", 
-                 annotation_text=f"LIVE PRICE: ${spot_price:.2f}", 
-                 annotation_position="top right")
+# --- MAIN UI EXECUTION ---
+st.title(f"📊 {ticker_sym} Gamma Exposure Profile")
+st.caption("Estimated GEX: Combining Open Interest with Price Sensitivity")
+
+# 1. Get the Live Price first
+current_spot = get_live_spot(ticker_sym)
+# 2. Get the Options Data
+df, data_spot = get_gex_data(ticker_sym)
+
+# Use the live price if we have it, otherwise fallback to the data price
+final_spot = current_spot if current_spot else data_spot
+
+if df is not None and final_spot:
+    chart_df = df.groupby('strike')['gex'].sum().reset_index()
+    
+    # ZOOM: Show strikes within 2% of live price
+    chart_df = chart_df[(chart_df['strike'] > final_spot * 0.98) & (chart_df['strike'] < final_spot * 1.02)]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=chart_df['gex'],
+        y=chart_df['strike'],
+        orientation='h',
+        marker_color=['#FF3131' if x < 0 else '#00FF41' for x in chart_df['gex']],
+        name="Net GEX"
+    ))
+
+    # This is the line that will move when you hit Refresh
+    fig.add_hline(y=final_spot, line_dash="dash", line_color="#00D4FF", 
+                 annotation_text=f"LIVE: ${final_spot:.2f}", annotation_position="top right")
+
+    fig.update_layout(template="plotly_dark", height=800, bargap=0.05)
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Syncing with live market data...")
+    
