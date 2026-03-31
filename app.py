@@ -43,7 +43,7 @@ def get_gex_data(symbol):
         def estimate_gamma(strike, spot):
             dist = abs(strike - spot)
             # Standard deviation roughly 2% of price for tight clustering
-            std_dev = spot * 0.02 
+            std_dev = spot * 0.01  # New: 1% range 
             return np.exp(-(dist**2) / (2 * std_dev**2))
 
         calls['gex'] = calls.apply(lambda x: x['openInterest'] * estimate_gamma(x['strike'], spot), axis=1)
