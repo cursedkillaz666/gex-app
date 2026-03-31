@@ -79,13 +79,32 @@ if df is not None:
     fig.add_hline(y=spot_price, line_dash="dash", line_color="#58a6ff", 
                  annotation_text=f"SPOT: ${spot_price:.2f}", annotation_position="top right")
 
+  # --- REFINED VISUAL LOGIC ---
+if df is not None:
+    chart_df = df.groupby('strike')['gex'].sum().reset_index()
+    
+    # ZOOM IN: Only show strikes within 2% of price to make bars look massive
+    chart_df = chart_df[(chart_df['strike'] > spot_price * 0.98) & (chart_df['strike'] < spot_price * 1.02)]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=chart_df['gex'],
+        y=chart_df['strike'],
+        orientation='h',
+        marker_color=['#FF3131' if x < 0 else '#00FF41' for x in chart_df['gex']], # Neon Red/Green
+        name="Net GEX"
+    ))
+
+    # Spot Price Line
+    fig.add_hline(y=spot_price, line_dash="dash", line_color="#00D4FF", 
+                 annotation_text=f"PRICE: ${spot_price:.2f}", annotation_position="top right")
+
     fig.update_layout(
         template="plotly_dark",
-        height=750,
-        xaxis_title="Negative Gamma (Put Wall) vs Positive Gamma (Call Wall)",
-        yaxis_title="Strike Price",
-        bargap=0.2
+        height=800, # Taller chart
+        xaxis_title="PUT WALL (NEGATIVE GEX) <---> CALL WALL (POSITIVE GEX)",
+        yaxis_title="STRIKE PRICE",
+        bargap=0.05, # Smaller gap = thicker, more "solid" looking bars
+        font=dict(family="Courier New, monospace", size=12, color="white")
     )
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Fetching latest market levels...")
