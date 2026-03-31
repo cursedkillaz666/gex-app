@@ -5,8 +5,8 @@ import plotly.graph_objects as go
 import numpy as np
 from streamlit_autorefresh import st_autorefresh
 
-# 1. AUTO-REFRESH (Every 30 seconds to update the blue 'LIVE' line)
-st_autorefresh(interval=30000, key="gex_heartbeat")
+# 1. LIVE HEARTBEAT (30s)
+st_autorefresh(interval=30000, key="gex_spy_qqq_fix")
 
 # 2. PAGE CONFIG
 st.set_page_config(page_title="GEX Advisor Pro", layout="wide")
@@ -14,95 +14,80 @@ st.markdown("<style>.main {background-color: #000000;}</style>", unsafe_allow_ht
 
 # 3. SIDEBAR
 st.sidebar.title("GEX SCANNER")
-ticker_sym = st.sidebar.selectbox("TICKER", ["IWM", "SPY", "QQQ"])
+ticker_sym = st.sidebar.selectbox("TICKER", ["SPY", "QQQ", "IWM"])
 
-# 4. DATA ENGINE
+# 4. DATA ENGINE (Strict Separation)
 @st.cache_data(ttl=60)
 def get_gex_data(symbol):
     try:
         tk = yf.Ticker(symbol)
         expiry = tk.options[0]
         chain = tk.option_chain(expiry)
+        spot = tk.history(period='1d')['Close'].iloc[-1]
         
-        calls = chain.calls[['strike', 'openInterest']].copy()
-        puts = chain.puts[['strike', 'openInterest']].copy()
-        
-        # Dual Side Logic: 
-        # Calls = Positive (Right side of 0)
-        # Puts = Negative (Left side of 0)
-        calls['gex'] = calls['openInterest']
-        puts['gex'] = -puts['openInterest']
-        
-        return pd.concat([calls, puts]), expiry
-    except:
-        return None, None
+        # Gaussian Math for the 'Spikes'
+        def calc_weight(strike, spot):
+            dist = abs(strike - spot)
+            return np.exp(-(dist**2) / (2 * (spot * 0.008)**2))
 
-def get_live_price(symbol):
-    try:
-        tk = yf.Ticker(symbol)
-        data = tk.history(period='1d', interval='1m')
-        return data['Close'].iloc[-1] if not data.empty else None
+        # --- CALLS (Always Right/Green) ---
+        c = chain.calls[['strike', 'openInterest']].copy()
+        c['gex'] = c.apply(lambda x: x['openInterest'] * calc_weight(x['strike'], spot), axis=1)
+        
+        # --- PUTS (Always Left/Red) ---
+        p = chain.puts[['strike', 'openInterest']].copy()
+        p['gex'] = p.apply(lambda x: -x['openInterest'] * calc_weight(x['strike'], spot), axis=1)
+        
+        combined = pd.concat([c, p])
+        return combined.groupby('strike')['gex'].sum().reset_index(), expiry, spot
     except:
-        return None
+        return None, None, None
 
 # 5. EXECUTION
-live_price = get_live_price(ticker_sym)
-df, exp_date = get_gex_data(ticker_sym)
+df, exp_date, live_price = get_gex_data(ticker_sym)
 
 if df is not None and live_price:
-    # Filter for strikes near the price (Zoom in like the Primo photo)
-    chart_df = df.groupby('strike')['gex'].sum().reset_index()
-    chart_df = chart_df[(chart_df['strike'] > live_price - 6) & (chart_df['strike'] < live_price + 6)]
+    # Match the Zoom Level from Primo's Photo (+/- 6 points)
+    chart_df = df[(df['strike'] > live_price - 6) & (df['strike'] < live_price + 6)]
+
+    # Dynamic Color Assignment based on Value
+    # Positive (Right) = Green | Negative (Left) = Red
+    colors = ['#00FF41' if x >= 0 else '#FF3131' for x in chart_df['gex']]
 
     fig = go.Figure()
-    
-    # --- COLOR FIX ---
-    # Green (#00FF41) for positive values (Calls)
-    # Red (#FF3131) for negative values (Puts)
-    colors = ['#00FF41' if x > 0 else '#FF3131' for x in chart_df['gex']]
-
     fig.add_trace(go.Bar(
         x=chart_df['gex'],
         y=chart_df['strike'],
         orientation='h',
         marker_color=colors,
-        width=0.4,
+        width=0.4, # Professional bar thickness
         marker_line_width=0
     ))
 
-    # Center the 0 line so you see both sides equally
-    max_val = chart_df['gex'].abs().max()
+    # Center the 0 line
+    max_abs = chart_df['gex'].abs().max()
 
     fig.update_layout(
         template="plotly_dark",
         height=900,
         paper_bgcolor='black',
         plot_bgcolor='black',
-        yaxis=dict(
-            tickmode='linear', 
-            dtick=1.0, 
-            title="STRIKE", 
-            gridcolor='#222',
-            fixedrange=True
-        ),
+        yaxis=dict(tickmode='linear', dtick=1.0, title="STRIKE", gridcolor='#222'),
         xaxis=dict(
-            range=[-max_val, max_val], 
-            title="PUTS (RED) <--- 0 ---> CALLS (GREEN)", 
+            range=[-max_abs, max_abs], 
+            title="PUT GEX (RED) <--- 0 ---> CALL GEX (GREEN)", 
             gridcolor='#222',
-            zerolinecolor="#666",
+            zerolinecolor="#ffffff",
             zerolinewidth=2
         ),
-        title=f"{ticker_sym} | Price: ${live_price:.2f} | Expiry: {exp_date}",
+        title=f"{ticker_sym} GEX | Spot: ${live_price:.2f} | Expiry: {exp_date}",
         margin=dict(l=50, r=50, t=80, b=50)
     )
 
-    # Live Price Line (Blue Dashed)
+    # Blue Live Price Magnet
     fig.add_hline(y=live_price, line_dash="dash", line_color="#00D4FF", 
                  annotation_text=f"LIVE: ${live_price:.2f}", 
                  annotation_position="top right",
-                 annotation_font_size=14,
                  annotation_font_color="#00D4FF")
 
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-else:
-    st.info("Market data syncing... If it's the weekend, price will reflect Friday's close.")
+    st.plotly_chart(fig, use_container_width=True)
