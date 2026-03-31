@@ -20,21 +20,21 @@ if st.sidebar.button("REFRESH"):
     st.cache_data.clear()
     st.rerun()
 
-# 3. DATA ENGINE (The "Gamma" Secret)
+# 3. DATA ENGINE
 @st.cache_data(ttl=300)
 def get_primo_data(symbol):
     try:
         tk = yf.Ticker(symbol)
         expiry = tk.options[0]
         chain = tk.option_chain(expiry)
-        spot = tk.history(period='1d')['Close'].iloc[-1]
         
-        # We need to simulate Gamma because free APIs don't provide it
-        # Real Gamma = OpenInterest * PriceSensitivity
+        # Base spot for gamma scaling
+        base_spot = tk.history(period='1d')['Close'].iloc[-1]
+        
         def calc_gamma(row, is_call):
-            # The closer to the price, the "sharper" the gamma spike
-            dist = abs(row['strike'] - spot)
-            gamma_factor = np.exp(-(dist**2) / (2 * (spot * 0.005)**2))
+            dist = abs(row['strike'] - base_spot)
+            # Gaussian scaling creates the "needle" look from the photo
+            gamma_factor = np.exp(-(dist**2) / (2 * (base_spot * 0.006)**2))
             return row['openInterest'] * gamma_factor * (1 if is_call else -1)
 
         calls = chain.calls.copy()
@@ -42,22 +42,32 @@ def get_primo_data(symbol):
         calls['gex'] = calls.apply(lambda x: calc_gamma(x, True), axis=1)
         puts['gex'] = puts.apply(lambda x: calc_gamma(x, False), axis=1)
         
-        return pd.concat([calls, puts]), spot, expiry
+        return pd.concat([calls, puts]), expiry
     except:
-        return None, None, None
+        return None, None
+
+def get_live_price(symbol):
+    try:
+        # Pulling 1m interval for the most 'live' feel possible
+        tk = yf.Ticker(symbol)
+        data = tk.history(period='1d', interval='1m')
+        return data['Close'].iloc[-1] if not data.empty else None
+    except:
+        return None
 
 # 4. CHART BUILDING
-df, live_price, exp_date = get_primo_data(ticker_sym)
+live_price = get_live_price(ticker_sym)
+df, exp_date = get_primo_data(ticker_sym)
 
-if df is not None:
+if df is not None and live_price:
     chart_df = df.groupby('strike')['gex'].sum().reset_index()
     
-    # Tight zoom to match the IWM update photo
+    # Range: +/- 5 points from current price to show both Call/Put walls
     chart_df = chart_df[(chart_df['strike'] > live_price - 5) & (chart_df['strike'] < live_price + 5)]
 
     fig = go.Figure()
     
-    # Adding the Bars (Thin & Precise)
+    # Adding Dual-Sided Bars
     fig.add_trace(go.Bar(
         x=chart_df['gex'],
         y=chart_df['strike'],
@@ -66,26 +76,34 @@ if df is not None:
             color=['#00FF41' if x > 0 else '#FF3131' for x in chart_df['gex']],
             line=dict(width=0)
         ),
-        width=0.2 # Makes bars thin like the photo
+        width=0.25 # Sharp, thin bars like the community scanner
     ))
 
-    # The Blue "Spot" Line
+    # Real-Time Price Line
     fig.add_hline(y=live_price, line_dash="dash", line_color="#00D4FF", 
-                 annotation_text=f"PRICE: ${live_price:.2f}", annotation_position="top right")
+                 annotation_text=f"LIVE: ${live_price:.2f}", 
+                 annotation_position="top right",
+                 annotation_font=dict(color="#00D4FF", size=14))
 
-    # Layout to match the "X" Post aesthetics
     fig.update_layout(
         template="plotly_dark",
-        height=800,
+        height=850,
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
         yaxis=dict(
-            showgrid=True, gridcolor='#333', 
-            tickmode='linear', dtick=1.0, # Shows every single dollar level
+            showgrid=True, gridcolor='#222', 
+            tickmode='linear', dtick=1.0,
             title="STRIKE"
         ),
-        xaxis=dict(showgrid=True, gridcolor='#333', title="GAMMA EXPOSURE"),
-        title=f"{ticker_sym} GEX Profile | Expiry: {exp_date}"
+        xaxis=dict(
+            showgrid=True, gridcolor='#222', 
+            title="PUT GEX (LEFT) | CALL GEX (RIGHT)",
+            zerolinecolor="#555"
+        ),
+        title=f"{ticker_sym} Gamma Profile | Expiry: {exp_date}",
+        margin=dict(l=20, r=20, t=60, b=20)
     )
 
     st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Market is closed or syncing... Check ticker or refresh.")
